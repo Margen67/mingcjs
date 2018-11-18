@@ -75,7 +75,8 @@ cs_mempool_create will return an object with the following fields if your option
         FUTEX_TIMED_OUT
     }
 ```
-    Before diving into all of these I should probably provide a quick example of using the library, then give context because this might look a little intimidating to the uninitiated.
+Before diving into all of these I should probably provide a quick example of using the library, then give context because this might look a little intimidating to the uninitiated.
+
 ```javascript
 {
   const mempool = cs_mempool_create();
