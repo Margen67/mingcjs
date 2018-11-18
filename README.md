@@ -95,10 +95,42 @@ cs_mempool_create will return an object with the following fields if your option
   //lets allocate a mat4
   const mat4_offset = preallocated_mat4x4.alloc();
   
-  console.log(typeof mat4_offset); // will be "number" because its just a primitive offset into the 
- 
+  console.log(typeof mat4_offset); // will be "number" because its just a primitive offset into the memory space
+  
+  //now lets use a wrapper object
+  
+  const mat4_proxy = new class_matrix4x4();
+  //these proxy objects have only one true field, ptr, which is a memory space offset
+  mat4_proxy.ptr = mat4_offset;
+  
+  //now we can do whatever we want with this mat4. we can access 0-15
+  //note that proxy objects are not dependent on the memory space until you give them a ptr.
+  //but ptr can be reassigned if its freed elsewhere or managed by a lookaside list.
   
   
 }
+
+The proxy objects are not necessary and you can do without them if you use the write/read/iwrite/iread functions instead (indexed write, indexed read, direct binary write, direct binary read) but those can get a bit confusing when your data becomes complex. 
+
+Proxy objects can be preallocated in an iife like so:
+
+const do_mat4x4_op = (function() {
+  const matv0 = new class_matrix4x4();
+  const matv1 = new class_matrix4x4();
+  return function(matp0, matp1) {
+    matv0.ptr = matp0;
+    matv1.ptr = matp1;
+    //do something with the matrices
+    
+  };
+})();
+
+In WebGL libraries it is common to use Float32Array instances for matrices. However typed array allocation is relatively expensive compared to standard arrays, partly because typed arrays do not exist on the main JS heap and the JS engine has to do extra bookkeeping on them. Using preallocated slices of a single typed array view overall is more efficient, but impractical without a decent wrapper. Here's hoping this ones decent.
+
+
+
+/*
+  more documentation. eventually
+*/
     
     
