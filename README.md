@@ -84,7 +84,7 @@ Before diving into all of these I should probably provide a quick example of usi
   //create a wrapper class for a 4x4 matrix
   //that is stored within a flat arraybuffer memory space
   
-  const class_matrix4x4 = mempool.create_native_class('0', 'f32''1', 'f32''2', 'f32''3', 'f32''4', 'f32''5', 'f32''6', 'f32''7', 'f32''8', 'f32''9', 'f32''10', 'f32''11', 'f32''12', 'f32''13', 'f32''14', 'f32''15', 'f32');
+  const class_matrix4x4 = mempool.create_native_class('0', 'f32','1', 'f32','2', 'f32','3', 'f32','4', 'f32','5', 'f32','6', 'f32','7', 'f32','8', 'f32','9', 'f32','10', 'f32','11', 'f32','12', 'f32','13', 'f32','14', 'f32','15', 'f32');
   
   //generate a list of 1024 preallocated 4x4 matrices that are contiguously allocated within this memory space
   //this is the ideal way to use the library, you can dynamically allocate but my allocator isnt too great performance wise,
