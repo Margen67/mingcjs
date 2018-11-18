@@ -26,7 +26,7 @@ The main cs_mempool_create function can be called with or without an options obj
 For the final two options note that mingcjs needs both start and end to be multiples of 8 to ensure that all usable arraybuffer view types can read the start and end. If they are not multiples of 8 it will align them, but that means you cannot rely on the allocated data explicitly starting at your given start and end if you do not do the alignment yourself, but you can rely on them lying within 8 bytes on either end of your provided values.
 
 cs_mempool_create will return an object with the following fields if your options were all valid:
-
+```javascript
 {
         stack_frame_end,
         stack_frame_begin,
@@ -74,9 +74,9 @@ cs_mempool_create will return an object with the following fields if your option
         FUTEX_WASNE,
         FUTEX_TIMED_OUT
     }
-    
+```
     Before diving into all of these I should probably provide a quick example of using the library, then give context because this might look a little intimidating to the uninitiated.
-
+```javascript
 {
   const mempool = cs_mempool_create();
   
@@ -109,11 +109,11 @@ cs_mempool_create will return an object with the following fields if your option
   
   
 }
-
+```
 The proxy objects are not necessary and you can do without them if you use the write/read/iwrite/iread functions instead (indexed write, indexed read, direct binary write, direct binary read) but those can get a bit confusing when your data becomes complex. 
 
 Proxy objects can be preallocated in an iife like so:
-
+```javascript
 const do_mat4x4_op = (function() {
   const matv0 = new class_matrix4x4();
   const matv1 = new class_matrix4x4();
@@ -124,7 +124,7 @@ const do_mat4x4_op = (function() {
     
   };
 })();
-
+```
 In WebGL libraries it is common to use Float32Array instances for matrices. However typed array allocation is relatively expensive compared to standard arrays, partly because typed arrays do not exist on the main JS heap and the JS engine has to do extra bookkeeping on them. Using preallocated slices of a single typed array view overall is more efficient, but impractical without a decent wrapper. Here's hoping this ones decent.
 
 
