@@ -5,7 +5,7 @@ to use smaller packed datatypes like 8/16 bit integers.
 
 
 The main cs_mempool_create function can be called with or without an options object to return a new flat arraybuffer based memory space. The options object has the structure:
-
+```javascript
 {
 
   ERROR_HANDLER : (message : str) => never, //a function called when the library encounters a terrible error. defaults to throw new error(message)
@@ -21,7 +21,7 @@ The main cs_mempool_create function can be called with or without an options obj
   MEM_ARRAYBUFFER_VIEW_END : number, //the offset at which allocatable memory ends. this ought to be (MEM_ARRAYBUFFER_VIEW_START + allocated size)
   
 }
-
+```
 
 For the final two options note that mingcjs needs both start and end to be multiples of 8 to ensure that all usable arraybuffer view types can read the start and end. If they are not multiples of 8 it will align them, but that means you cannot rely on the allocated data explicitly starting at your given start and end if you do not do the alignment yourself, but you can rely on them lying within 8 bytes on either end of your provided values.
 
