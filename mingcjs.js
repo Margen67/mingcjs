@@ -1,6 +1,72 @@
 
 function cs_mempool_create(_options) {
-    const __global__ = typeof self !== "undefined" ? self : (typeof window !== "undefined" ? window : global);
+    const KILOBYTE = 1024;
+
+    _options = _options || {
+    };
+    _options.ERROR_HANDLER = _options.ERROR_HANDLER || (function(e) {
+        throw new Error(e);
+    });
+
+    const {__global__, is_worker} = (function() {
+
+        if(typeof self !== "undefined") {
+            return {__global__:self, is_worker : true};
+        }
+        else if(typeof window !== "undefined") {
+            return {__global__:window, is_worker: false};
+        }
+        else {
+            if(typeof global === "undefined") {
+                _options.ERROR_HANDLER("WE HAVE NO IDEA WHAT WE ARE.");
+
+            }
+            return {__global__:global, is_worker:false};
+        }
+    })();
+
+    /*
+        chrome is the only engine that does frozen object optimization afaik, and only recent versions like 60+ish?
+     */
+    const FREEZING_OBJECTS_IMPROVES_PERFORMANCE = typeof __global__ === typeof global ||
+        !!~navigator.userAgent.indexOf("Chrome");
+
+    const _freeze = (function() {
+        return FREEZING_OBJECTS_IMPROVES_PERFORMANCE ?
+            Object.freeze : (function(v) {
+                return v;
+            });
+    })();
+    _options.GP_MEM_SIZE = _options.GP_MEM_SIZE || KILOBYTE*128;
+
+    _options.STACK_SIZE =  _options.STACK_SIZE || 32 * KILOBYTE;
+
+
+    _options.MEM_ARRAYBUFFER_VIEW_START = _options.MEM_ARRAYBUFFER_VIEW_START || 0;
+
+    /*
+        realign to 8-byte boundary so all array views that may be used can have the same start and end
+     */
+    if(_options.MEM_ARRAYBUFFER_VIEW_START & 7 ) {
+        _options.MEM_ARRAYBUFFER_VIEW_START += 8;
+        _options.MEM_ARRAYBUFFER_VIEW_START &= ~7;
+    }
+
+
+    _options.MEM_ARRAYBUFFER_VIEW_END = _options.MEM_ARRAYBUFFER_VIEW_END || 0;
+    if(_options.MEM_ARRAYBUFFER_VIEW_END & 7 ) {
+        //align downwards to 8 byte boundary
+        _options.MEM_ARRAYBUFFER_VIEW_END &= ~7;
+    }
+
+
+    const options = _freeze(_options);
+
+
+
+
+
+
 
     const __clz32 = (function() {
         const _clz32 = Math.clz32;
@@ -9,18 +75,7 @@ function cs_mempool_create(_options) {
             return _clz32(v|0);
         };
     })();
-    const KILOBYTE = 1024;
 
-    const options = _options || {
-    };
-
-    options.GP_MEM_SIZE = options.GP_MEM_SIZE || KILOBYTE*128;
-
-    options.STACK_SIZE =  options.STACK_SIZE || 32 * KILOBYTE;
-
-    options.ERROR_HANDLER = options.ERROR_HANDLER || (function(e) {
-        throw new Error(e);
-    });
 
     const has_sab = typeof __global__["SharedArrayBuffer"] !== "undefined" && (!options.MEM_ARRAYBUFFER || options.MEM_ARRAYBUFFER instanceof SharedArrayBuffer);
 
@@ -195,16 +250,32 @@ function cs_mempool_create(_options) {
             else
                 b = this.buffer = options.MEM_ARRAYBUFFER;
 
-            this.u8 = new Uint8Array(b);
-            this.u16 = new Uint16Array(b);
-            this.u32 = new Uint32Array(b);
-            this.i8 = new Int8Array(b);
-            this.i16 = new Int16Array(b);
-            this.i32 = new Int32Array(b);
-            this.f32 = new Float32Array(b);
+            function construct_view(type) {
+                if((options.MEM_ARRAYBUFFER_VIEW_END | options.MEM_ARRAYBUFFER_VIEW_START) !== 0) {
+                    return new type(b,options.MEM_ARRAYBUFFER_VIEW_START,  (options.MEM_ARRAYBUFFER_VIEW_END - options.MEM_ARRAYBUFFER_VIEW_START) / type.BYTES_PER_ELEMENT)
+                }
+                else {
+                    return new type(b);
+                }
+            }
+
+
+
+            this.u8 = construct_view(Uint8Array);
+            this.u16 = construct_view(Uint16Array);
+            this.u32 = construct_view(Uint32Array);
+            this.i8 = construct_view(Int8Array);
+            this.i16 = construct_view(Int16Array);
+            this.i32 = construct_view(Int32Array);
+            this.f32 = construct_view(Float32Array);
+
             this.pageTable = new page_list_t();
             this.totalAlloc = nbytes;
             this.currentReserved = 0;
+
+
+
+
             //insert first page
             this.add_page_after(null, 0, nbytes);
         }
@@ -293,7 +364,18 @@ function cs_mempool_create(_options) {
 
     const GP_MEM_SIZE = options.GP_MEM_SIZE;
     const STACK_SIZE = options.STACK_SIZE;
-    const GLOBAL_MEMORY = new cs_pool_t(GP_MEM_SIZE + STACK_SIZE  );
+
+    if(GP_MEM_SIZE + STACK_SIZE > options.MEM_ARRAYBUFFER_VIEW_END - options.MEM_ARRAYBUFFER_VIEW_START &&
+        (options.MEM_ARRAYBUFFER_VIEW_END | options.MEM_ARRAYBUFFER_VIEW_START) !== 0) {
+
+        options.ERROR_HANDLER("Specified start and end for arraybuffer view cannot accommodate required size in bytes given in options.");
+    }
+
+    const TOTAL_MEMORY_SIZE = GP_MEM_SIZE + STACK_SIZE < options.MEM_ARRAYBUFFER_VIEW_END - options.MEM_ARRAYBUFFER_VIEW_START ?
+        options.MEM_ARRAYBUFFER_VIEW_END - options.MEM_ARRAYBUFFER_VIEW_START
+        : GP_MEM_SIZE + STACK_SIZE;
+
+    const GLOBAL_MEMORY = new cs_pool_t(TOTAL_MEMORY_SIZE );
     //offset stack by 8 so very start is not nullptr
     const STACK_BASE = GLOBAL_MEMORY.allocate(STACK_SIZE + 8) + 8;
 
@@ -347,7 +429,7 @@ function cs_mempool_create(_options) {
 
     const cs_lookaside_list_t = (function () {
 
-        class lookaside_entry_t {
+        class cs_lookaside_entry_t {
             constructor() {
                 this.next = null;
                 this.value = 0 >>> 0;
@@ -359,7 +441,7 @@ function cs_mempool_create(_options) {
             _new_entry() {
                 const n = this.avail;
                 if (!n) {
-                    return new lookaside_entry_t();
+                    return new cs_lookaside_entry_t();
                 }
                 else {
                     this.avail = n.next;
@@ -660,15 +742,20 @@ function cs_mempool_create(_options) {
         return glbf32[(ptr >> 2) + index];
     }
 
+    const ALLOWED_TYPES =
+        'i8-u8-i16-u16-i32-u32-f32-au8-ai8-au16-ai16-au32-ai32'.split('-');
+
+
     class cs_field_descr_t {
         constructor(name, type) {
+
+            if(!~ALLOWED_TYPES.indexOf(type)) {
+                options.ERROR_HANDLER(`Type ${type} is not a valid type!`);
+            }
 
             this.name = name;
             this.true_type = type;
 
-            if(type === 'af32') {
-                options.ERROR_HANDLER("Atomic float32 not allowed!");
-            }
             this.atomic = false;
             if(type.charAt(0) == 'a') {
                 type = type.substr(1);
@@ -873,7 +960,7 @@ function cs_mempool_create(_options) {
             return function( expected, timeout = undefined) {
 
                 //returns 0 if "ok" aka we waited, 1 if "not-equal" (no wait needed), and -1 if timed-out
-                return __clz32(futex_wait(glbi32, (this.ptr+offset) >>> 2, expected, timeout).charCodeAt(0) - 110) - 30;
+                return (__clz32(futex_wait(glbi32, (this.ptr+offset) >>> 2, expected, timeout).charCodeAt(0) - 110) - 30) | 0;
             };
         }
     })();
@@ -891,7 +978,23 @@ function cs_mempool_create(_options) {
         }
     })();
 
-    function __create_native_class(is_stack, ...descrs) {
+    function __create_native_class(is_stack, ..._descrs) {
+
+        const descrs =[];
+        {
+            const extent_descrs = _descrs.length / 2;
+
+            if (_descrs.length & 1) {
+                options.ERROR_HANDLER("Odd number of descriptors passed to create_native_class. Expected 2-element tuples of name:type.");
+            }
+
+            for (let i = 0; i < extent_descrs; ++i) {
+                const iscaled = i << 1;
+
+                descrs.push(new cs_field_descr_t(_descrs[iscaled], _descrs[iscaled + 1]));
+            }
+        }
+
 
 
         const native_class =
@@ -910,7 +1013,19 @@ function cs_mempool_create(_options) {
 
 
         for(let descr of descrs) {
+
+
             const sz = descr.get_size();
+            /*
+                alignment check. make sure that an arraybuffer view can read the datatype correctly at the offset
+
+                this inserts the necessary padding bytes to keep the fields aligned
+            */
+            if(offset & (sz - 1)) {
+                offset += sz;
+                //realign to closest multiple of sz
+                offset &= ~(sz - 1);
+            }
 
             Object.defineProperty(native_class.prototype, descr.name, {
                 get: descr.create_getter(offset),
@@ -919,7 +1034,13 @@ function cs_mempool_create(_options) {
 
             if(descr.true_type === 'ai32') {
                 native_class.prototype[descr.name + "_wake"] = descr.create_wake(offset);
-                native_class.prototype[descr.name + "_wait"] = descr.create_wait(offset);
+                if(!is_worker) {
+                    /*
+                        waiting on an atomic futex isnt allowed on the main thread by the spec
+                     */
+                    native_class.prototype[descr.name + "_wait"] = descr.create_wait(offset);
+
+                }
             }
 
             if(descr.atomic) {
@@ -979,7 +1100,7 @@ function cs_mempool_create(_options) {
         return GLOBAL_MEMORY.buffer;
     }
 
-    return {
+    return _freeze({
         stack_frame_end,
         stack_frame_begin,
         allocate,
@@ -1018,7 +1139,6 @@ function cs_mempool_create(_options) {
         iwrite_i16,
         iwrite_u8,
         iwrite_i8,
-        cs_field_descr_t,
         create_native_class,
         create_native_stack_class,
         build_lookaside_list,
@@ -1027,6 +1147,6 @@ function cs_mempool_create(_options) {
         FUTEX_WAITED,
         FUTEX_WASNE,
         FUTEX_TIMED_OUT
-    };
+    });
 }
 
