@@ -79,6 +79,8 @@ function cs_mempool_create(_options) {
 
     const has_sab = typeof __global__["SharedArrayBuffer"] !== "undefined" && (!options.MEM_ARRAYBUFFER || options.MEM_ARRAYBUFFER instanceof SharedArrayBuffer);
 
+    const has_bigint64 = typeof __global__["BigInt64Array"] !== "undefined";
+
     class cs_list_element_t {
         constructor(data) {
             this._data = data;
@@ -148,7 +150,7 @@ function cs_mempool_create(_options) {
                     newData = rest[0];
                 }
                 else {
-                    newData = new (element_constructor.bind.apply(element_constructor, [void 0].concat(rest)))();
+                    newData = new element_constructor(...rest);
                 }
                 let newElement = new cs_list_element_t(newData);
                 //list head
@@ -211,7 +213,10 @@ function cs_mempool_create(_options) {
 
             this._size = size >>> 0;
             this._claimed = false;
+
             this._offset = (offset >>> 0);
+
+
         }
 
         size() {
@@ -243,7 +248,7 @@ function cs_mempool_create(_options) {
 
     class cs_pool_t {
         constructor(nbytes) {
-            nbytes = (nbytes + 4) & (~(4 - 1));
+            nbytes = (nbytes + 8) & (~(8 - 1));
             let b;
             if(!options.MEM_ARRAYBUFFER)
                 b = (this.buffer = new (has_sab ? SharedArrayBuffer : ArrayBuffer)(nbytes));
@@ -268,6 +273,12 @@ function cs_mempool_create(_options) {
             this.i16 = construct_view(Int16Array);
             this.i32 = construct_view(Int32Array);
             this.f32 = construct_view(Float32Array);
+            this.f64 = construct_view(Float64Array);
+
+            if(has_bigint64) {
+                this.i64 = construct_view(BigInt64Array);
+                this.u64 = construct_view(BigUint64Array);
+            }
 
             this.pageTable = new page_list_t();
             this.totalAlloc = nbytes;
@@ -387,6 +398,11 @@ function cs_mempool_create(_options) {
     const glbu32 = GLOBAL_MEMORY.u32;
     const glbi32 = GLOBAL_MEMORY.i32;
     const glbf32 = GLOBAL_MEMORY.f32;
+    const glbf64 = GLOBAL_MEMORY.f64;
+
+    const glbu64 = has_bigint64 ? GLOBAL_MEMORY.u64 : null;
+    const glbi64 = has_bigint64 ? GLOBAL_MEMORY.i64 : null;
+
 
 
 
@@ -545,7 +561,25 @@ function cs_mempool_create(_options) {
     }
 
     function zeromem(p, sz) {
-        memset(p, 0, sz);
+        let ptr = p;
+        let end = p + sz;
+
+        if(!(p&7)) {
+            ptr >>>= 3;
+            end >>>= 3;
+
+            for (; ptr < end; ++ptr) {
+                glbf64[ptr] = 0;
+            }
+
+            ptr <<= 3;
+            end <<= 3;
+            end += (sz & 7)
+        }
+        for (; ptr < end; ++ptr) {
+            glbu8[ptr] = 0;
+        }
+
     }
 
     function store_string(p, str) {
@@ -610,6 +644,62 @@ function cs_mempool_create(_options) {
         }
     }
 
+    const fp16_convert = (function() {
+
+        /*
+            found this one on stack overflow: https://stackoverflow.com/questions/32633585/how-do-you-convert-to-half-floats-in-javascript
+         */
+        const floatView = new Float32Array(1);
+        const int32View = new Int32Array(floatView.buffer);
+
+        return function toHalf( fval ) {
+            floatView[0] = fval;
+            var fbits = int32View[0];
+            var sign  = (fbits >> 16) & 0x8000;          // sign only
+            var val   = ( fbits & 0x7fffffff ) + 0x1000; // rounded value
+
+            if( val >= 0x47800000 ) {             // might be or become NaN/Inf
+                if( ( fbits & 0x7fffffff ) >= 0x47800000 ) {
+                    // is or must become NaN/Inf
+                    if( val < 0x7f800000 ) {          // was value but too large
+                        return sign | 0x7c00;           // make it +/-Inf
+                    }
+                    return sign | 0x7c00 |            // remains +/-Inf or NaN
+                        ( fbits & 0x007fffff ) >> 13; // keep NaN (and Inf) bits
+                }
+                return sign | 0x7bff;               // unrounded not quite Inf
+            }
+            if( val >= 0x38800000 ) {             // remains normalized value
+                return sign | val - 0x38000000 >> 13; // exp - 127 + 15
+            }
+            if( val < 0x33000000 )  {             // too small for subnormal
+                return sign;                        // becomes +/-0
+            }
+            val = ( fbits & 0x7fffffff ) >> 23;   // tmp exp for subnormal calc
+            return sign | ( ( fbits & 0x7fffff | 0x800000 ) // add subnormal bit
+                + ( 0x800000 >>> val - 102 )     // round depending on cut off
+                >> 126 - val );                  // div by 2^(1-(exp-127+15)) and >> 13 | exp=0
+        };
+    }());
+
+    /*
+    also from stack overflow : https://stackoverflow.com/questions/5678432/decompressing-half-precision-floats-in-javascript
+     */
+    function decode_fp16 (binary) {
+        var exponent = (binary & 0x7C00) >> 10,
+            fraction = binary & 0x03FF;
+
+        return (binary >> 15 ? -1 : 1) * (
+            exponent ?
+                (
+                    exponent === 0x1F ?
+                        fraction ? NaN : Infinity :
+                        Math.pow(2, exponent - 15) * (1 + fraction / 0x400)
+                ) :
+                6.103515625e-5 * (fraction / 0x400)
+        );
+    }
+
     function read_string(p) {
 
         let str = "";
@@ -623,6 +713,8 @@ function cs_mempool_create(_options) {
 
 
     }
+
+
 
     function write_u8(ptr, value) {
         glbu8[ptr] = value;
@@ -641,36 +733,36 @@ function cs_mempool_create(_options) {
     }
 
     function write_u16(ptr, value) {
-        glbu16[ptr >> 1] = value;
+        glbu16[ptr >>> 1] = value;
     }
 
     function write_i16(ptr, value) {
-        glbi16[ptr >> 1] = value;
+        glbi16[ptr >>> 1] = value;
     }
 
     function read_u16(ptr) {
-        return glbu16[ptr >> 1];
+        return glbu16[ptr >>> 1];
     }
 
     function read_i16(ptr) {
-        return glbi16[ptr >> 1];
+        return glbi16[ptr >>> 1];
     }
 
 
     function write_u32(ptr, value) {
-        glbu32[ptr >> 2] = value;
+        glbu32[ptr >>> 2] = value;
     }
 
     function write_i32(ptr, value) {
-        glbi32[ptr >> 2] = value;
+        glbi32[ptr >>> 2] = value;
     }
 
     function read_u32(ptr) {
-        return glbu32[ptr >> 2]
+        return glbu32[ptr >>> 2]
     }
 
     function read_i32(ptr) {
-        return glbi32[ptr >> 2];
+        return glbi32[ptr >>> 2];
     }
 
     function iwrite_i8(ptr, index, value) {
@@ -692,58 +784,112 @@ function cs_mempool_create(_options) {
 
 
     function iwrite_i16(ptr, index, value) {
-        glbi16[(ptr >> 1) + index] = value;
+        glbi16[(ptr >>> 1) + index] = value;
     }
 
     function iread_i16(ptr, index) {
-        return glbi16[(ptr >> 1) + index];
+        return glbi16[(ptr >>> 1) + index];
     }
 
 
 
     function iwrite_u16(ptr, index, value) {
-        glbu16[(ptr >> 1) + index] = value;
+        glbu16[(ptr >>> 1) + index] = value;
     }
 
     function iread_u16(ptr, index) {
-        return glbu16[(ptr >> 1) + index];
+        return glbu16[(ptr >>> 1) + index];
     }
 
     function iwrite_u32(ptr, index, value) {
-        glbu32[(ptr >> 2) + index] = value;
+        glbu32[(ptr >>> 2) + index] = value;
     }
 
     function iread_u32(ptr, index) {
-        return glbu32[(ptr >> 2) + index];
+        return glbu32[(ptr >>> 2) + index];
     }
 
     function iwrite_i32(ptr, index, value) {
-        glbi32[(ptr >> 2) + index] = value;
+        glbi32[(ptr >>> 2) + index] = value;
     }
 
     function iread_i32(ptr, index) {
-        return glbi32[(ptr >> 2) + index];
+        return glbi32[(ptr >>> 2) + index];
     }
 
     function read_f32(ptr) {
-        return glbf32[ptr >> 2];
+        return glbf32[ptr >>> 2];
     }
 
     function write_f32(ptr, value) {
-        glbf32[ptr >> 2] = value;
+        glbf32[ptr >>> 2] = value;
     }
 
 
     function iwrite_f32(ptr, index, value) {
-        glbf32[(ptr >> 2) + index] = value;
+        glbf32[(ptr >>> 2) + index] = value;
     }
 
     function iread_f32(ptr, index) {
-        return glbf32[(ptr >> 2) + index];
+        return glbf32[(ptr >>> 2) + index];
     }
 
+    function write_f64(ptr, value) {
+        glbf64[ptr >>> 3] = value;
+    }
+
+    function read_f64(ptr) {
+        return glbf64[ptr >>> 3];
+    }
+
+    function iwrite_f64(ptr, index, value) {
+        glbf64[(ptr >>> 3) + index] = value;
+    }
+
+    function iread_f64(ptr, index) {
+        return glbf64[(ptr >>> 3) + index];
+    }
+
+    function write_i64(ptr, value) {
+        glbi64[ptr >>> 3] = value;
+    }
+
+    function read_i64(ptr) {
+        return glbi64[ptr >>> 3];
+    }
+
+    function iwrite_i64(ptr, index, value) {
+        glbi64[(ptr >>> 3) + index] = value;
+    }
+
+    function iread_i64(ptr, index) {
+        return glbi64[(ptr >>> 3) + index];
+    }
+
+
+    function write_u64(ptr, value) {
+        glbu64[ptr >>> 3] = value;
+    }
+
+    function read_u64(ptr) {
+        return glbu64[ptr >>> 3];
+    }
+
+    function iwrite_u64(ptr, index, value) {
+        glbu64[(ptr >>> 3) + index] = value;
+    }
+
+    function iread_u64(ptr, index) {
+        return glbu64[(ptr >>> 3) + index];
+    }
+
+
     const ALLOWED_TYPES =
-        'i8-u8-i16-u16-i32-u32-f32-au8-ai8-au16-ai16-au32-ai32'.split('-');
+        (
+            'i8-u8-i16-u16-i32-u32-f16-f32-f64-au8-ai8-au16-ai16-au32-ai32-unorm8-unorm16-str8'
+             + (has_bigint64 ? "-i64-u64" : "")
+        )
+            .split('-');
 
 
     class cs_field_descr_t {
@@ -778,6 +924,18 @@ function cs_mempool_create(_options) {
                 case 'i16':
                 case 'u16':
                     return 2;
+                case 'f64':
+                case 'i64':
+                case 'u64':
+                    return 8;
+                case 'unorm8':
+                    return 1;
+                case 'f16':
+                case 'unorm16':
+                    return 2;
+                case 'str8':
+                    return 4;
+
             }
         }
 
@@ -819,6 +977,41 @@ function cs_mempool_create(_options) {
                         return function () {
                             return glbf32[(this.ptr + offset) >>> 2];
                         };
+                    case 'f64':
+                        return function () {
+                            return glbf64[(this.ptr + offset) >>> 3];
+                        };
+                    case 'u64':
+                        return function () {
+                            return glbu64[(this.ptr + offset) >>> 3];
+                        };
+                    case 'i64':
+                        return function () {
+                            return glbu64[(this.ptr + offset) >>> 3];
+                        };
+                    case 'unorm8':
+                        return function () {
+                            return glbu8[(this.ptr + offset)] * 0.00392156862745098;
+                        };
+                    case 'unorm16':
+                        return function() {
+                            return glbu16[(this.ptr + offset) >>> 1] * 0.000015259021896696422;
+                        };
+                    case 'f16':
+                        return function() {
+                            return decode_fp16(glbu16[(this.ptr + offset) >>> 1]);
+                        };
+                    case 'str8':
+                        return function () {
+                            const p = glbu32[(this.ptr + offset) >>> 2];
+                            if(!p) {
+                                return "";
+                            }
+                            else {
+                                return read_string(p);
+                            }
+                        };
+
                 }
             }
             else {
@@ -847,13 +1040,14 @@ function cs_mempool_create(_options) {
                         return function () {
                             return _atomic_load(glbu32, (this.ptr + offset) >>> 2);
                         };
+
                 }
             }
         };
     })();
 
     cs_field_descr_t.prototype.create_setter = (function() {
-        const _atomic_store = has_sab ? Atomics.store : null;;
+        const _atomic_store = has_sab ? Atomics.store : null;
         return function(offset) {
             if(!this.atomic) {
                 switch (this.type) {
@@ -884,6 +1078,48 @@ function cs_mempool_create(_options) {
                     case 'f32':
                         return function (v) {
                             glbf32[(this.ptr + offset) >>> 2] = v;
+                        };
+                    case 'f64':
+                        return function (v) {
+                            glbf64[(this.ptr + offset) >>> 3] = v;
+                        };
+                    case 'u64':
+                        return function (v) {
+                            glbu64[(this.ptr + offset) >>> 3] = v;
+                        };
+                    case 'i64':
+                        return function (v) {
+                            glbi64[(this.ptr + offset) >>> 3] = v;
+                        };
+
+                    case 'unorm8':
+                        return function (v) {
+                            glbu8[this.ptr + offset] = (v * 255.0) >>> 0;
+                        };
+                    case 'unorm16':
+                        return function (v) {
+                            glbu16[(this.ptr + offset)  >> 1] = (v * 65535.0) >>> 0;
+                        };
+                    case 'f16':
+                        return function(v) {
+                           glbu16[(this.ptr + offset) >>> 1] = fp16_convert(v);
+                        };
+                    case 'str8':
+                        return function (v) {
+                            v = "" + v;
+                            const idx = (this.ptr + offset) >>> 2;
+
+                            const p = glbu32[idx];
+                            if(p) {
+                                deallocate(p);
+                            }
+
+                            const sptr = allocate(v.length+1);
+
+                            store_string(sptr, v);
+
+                            glbu32[idx] = sptr;
+
                         };
                 }
             }
@@ -917,66 +1153,109 @@ function cs_mempool_create(_options) {
             }
         };
     })();
-    cs_field_descr_t.prototype.create_cmpxchg = (function() {
-        const _atomic_cmpxchg = has_sab ? Atomics.compareExchange : null;
-        return function(offset) {
-            switch (this.type) {
-                case 'i8':
-                    return function (expected, v) {
-                        _atomic_cmpxchg(glbi8, this.ptr + offset, expected, v)
-                    };
-                case 'u8':
-                    return function (expected, v) {
-                        _atomic_cmpxchg(glbu8, this.ptr + offset, expected, v)
-                    };
-                case 'i16':
-                    return function (expected, v) {
-                        _atomic_cmpxchg(glbi16, (this.ptr + offset) >>> 1, expected, v)
-                    };
-                case 'u16':
-                    return function (expected, v) {
-                        _atomic_cmpxchg(glbu16, (this.ptr + offset) >>> 1, expected, v)
-                    };
-                case 'i32':
-                    return function (expected, v) {
-                        _atomic_cmpxchg(glbi32, (this.ptr + offset) >>> 2, expected, v)
-                    };
-                case 'u32':
-                    return function (expected, v) {
-                        _atomic_cmpxchg(glbu32, (this.ptr + offset) >>> 2, expected, v)
-                    };
+    if(has_sab) {
+        cs_field_descr_t.prototype.create_cmpxchg = (function () {
+            const _atomic_cmpxchg = has_sab ? Atomics.compareExchange : null;
+            return function (offset) {
+                switch (this.type) {
+                    case 'i8':
+                        return function (expected, v) {
+                            return _atomic_cmpxchg(glbi8, this.ptr + offset, expected, v)
+                        };
+                    case 'u8':
+                        return function (expected, v) {
+                            return _atomic_cmpxchg(glbu8, this.ptr + offset, expected, v)
+                        };
+                    case 'i16':
+                        return function (expected, v) {
+                            return _atomic_cmpxchg(glbi16, (this.ptr + offset) >>> 1, expected, v)
+                        };
+                    case 'u16':
+                        return function (expected, v) {
+                            return _atomic_cmpxchg(glbu16, (this.ptr + offset) >>> 1, expected, v)
+                        };
+                    case 'i32':
+                        return function (expected, v) {
+                            return _atomic_cmpxchg(glbi32, (this.ptr + offset) >>> 2, expected, v)
+                        };
+                    case 'u32':
+                        return function (expected, v) {
+                            return _atomic_cmpxchg(glbu32, (this.ptr + offset) >>> 2, expected, v)
+                        };
 
-            }
-        };
-    })();
+                }
+            };
+        })();
 
-    cs_field_descr_t.prototype.create_wait = (function() {
-        const futex_wait = Atomics.wait;
-        return function(offset) {
-            if(this.true_type !== "ai32") {
-                options.ERROR_HANDLER("Only atomic i32 may use futex_wait");
-            }
+        function create_atomic_op(op) {
+            const _atomic_ = op;
+            return function (offset) {
+                switch (this.type) {
+                    case 'i8':
+                        return function ( v) {
+                            return _atomic_(glbi8, this.ptr + offset, v);
+                        };
+                    case 'u8':
+                        return function ( v) {
+                            return _atomic_(glbu8, this.ptr + offset, v);
+                        };
+                    case 'i16':
+                        return function (v) {
+                            return _atomic_(glbi16, (this.ptr + offset) >>> 1, v);
+                        };
+                    case 'u16':
+                        return function ( v) {
+                            return _atomic_(glbu16, (this.ptr + offset) >>> 1, v);
+                        };
+                    case 'i32':
+                        return function (v) {
+                            return _atomic_(glbi32, (this.ptr + offset) >>> 2, v);
+                        };
+                    case 'u32':
+                        return function ( v) {
+                            return _atomic_(glbu32, (this.ptr + offset) >>> 2, v);
+                        };
 
-            return function( expected, timeout = undefined) {
-
-                //returns 0 if "ok" aka we waited, 1 if "not-equal" (no wait needed), and -1 if timed-out
-                return (__clz32(futex_wait(glbi32, (this.ptr+offset) >>> 2, expected, timeout).charCodeAt(0) - 110) - 30) | 0;
+                }
             };
         }
-    })();
+        cs_field_descr_t.prototype.create_atomic_or = create_atomic_op(Atomics.or);
+        cs_field_descr_t.prototype.create_atomic_xor = create_atomic_op(Atomics.xor);
+        cs_field_descr_t.prototype.create_atomic_and = create_atomic_op(Atomics.and);
 
-    cs_field_descr_t.prototype.create_wake = (function() {
-        const futex_wake = Atomics.notify;
-        return function(offset) {
-            if(this.true_type !== "ai32") {
-                options.ERROR_HANDLER("Only atomic i32 may use futex_wait");
+        cs_field_descr_t.prototype.create_atomic_add = create_atomic_op(Atomics.add);
+        cs_field_descr_t.prototype.create_atomic_sub = create_atomic_op(Atomics.sub);
+
+        cs_field_descr_t.prototype.create_atomic_exchange = create_atomic_op(Atomics.exchange);
+
+        cs_field_descr_t.prototype.create_wait = (function () {
+            const futex_wait = Atomics.wait;
+            return function (offset) {
+                if (this.true_type !== "ai32") {
+                    options.ERROR_HANDLER("Only atomic i32 may use futex_wait");
+                }
+
+                return function (expected, timeout = undefined) {
+
+                    //returns 0 if "ok" aka we waited, 1 if "not-equal" (no wait needed), and -1 if timed-out
+                    return (__clz32(futex_wait(glbi32, (this.ptr + offset) >>> 2, expected, timeout).charCodeAt(0) - 110) - 30) | 0;
+                };
             }
+        })();
 
-            return function(expected, count = undefined) {
-                return futex_wake(glbi32, (this.ptr+offset) >>> 2, count);
-            };
-        }
-    })();
+        cs_field_descr_t.prototype.create_wake = (function () {
+            const futex_wake = Atomics.notify;
+            return function (offset) {
+                if (this.true_type !== "ai32") {
+                    options.ERROR_HANDLER("Only atomic i32 may use futex_wait");
+                }
+
+                return function (expected, count = undefined) {
+                    return futex_wake(glbi32, (this.ptr + offset) >>> 2, count);
+                };
+            }
+        })();
+    }
 
     function __create_native_class(is_stack, ..._descrs) {
 
@@ -1044,7 +1323,13 @@ function cs_mempool_create(_options) {
             }
 
             if(descr.atomic) {
-                native_class.prototype[descr.name + "_cmpxchg"] = descr.create_cmpxchg(offset)
+                native_class.prototype[descr.name + "_cmpxchg"] = descr.create_cmpxchg(offset);
+                native_class.prototype[descr.name + "_atomic_exchange"] = descr.create_atomic_exchange(offset);
+                native_class.prototype[descr.name + "_atomic_and"] = descr.create_atomic_and(offset);
+                native_class.prototype[descr.name + "_atomic_xor"] = descr.create_atomic_xor(offset);
+                native_class.prototype[descr.name + "_atomic_or"] = descr.create_atomic_or(offset);
+                native_class.prototype[descr.name + "_atomic_sub"] = descr.create_atomic_sub(offset);
+                native_class.prototype[descr.name + "_atomic_add"] = descr.create_atomic_add(offset);
             }
 
             offset += descr.get_size();
@@ -1139,6 +1424,22 @@ function cs_mempool_create(_options) {
         iwrite_i16,
         iwrite_u8,
         iwrite_i8,
+
+        read_f64,
+        write_f64,
+        iread_f64,
+        iwrite_f64,
+
+        read_u64,
+        write_u64,
+        iread_u64,
+        iwrite_u64,
+
+        read_i64,
+        write_i64,
+        iread_i64,
+        iwrite_i64,
+
         create_native_class,
         create_native_stack_class,
         build_lookaside_list,
@@ -1149,4 +1450,3 @@ function cs_mempool_create(_options) {
         FUTEX_TIMED_OUT
     });
 }
-
