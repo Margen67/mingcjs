@@ -51,6 +51,7 @@ cs_mempool_create will return an object with the following fields if your option
         read_u16,
         read_u8,
         read_u32,
+        
         iread_f32,
         iread_u32,
         iread_i32,
@@ -65,6 +66,22 @@ cs_mempool_create will return an object with the following fields if your option
         iwrite_i16,
         iwrite_u8,
         iwrite_i8,
+
+        read_f64,
+        write_f64,
+        iread_f64,
+        iwrite_f64,
+
+        read_u64,
+        write_u64,
+        iread_u64,
+        iwrite_u64,
+
+        read_i64,
+        write_i64,
+        iread_i64,
+        iwrite_i64,
+
         create_native_class,
         create_native_stack_class,
         build_lookaside_list,
@@ -126,7 +143,50 @@ const do_mat4x4_op = (function() {
   };
 })();
 ```
-In WebGL libraries it is common to use Float32Array instances for matrices. However typed array allocation is relatively expensive compared to standard arrays, partly because typed arrays do not exist on the main JS heap and the JS engine has to do extra bookkeeping on them. Using preallocated slices of a single typed array view overall is more efficient, but impractical without a decent wrapper. Here's hoping this ones decent.
+In WebGL libraries it is common to use Float32Array instances for matrices. However typed array allocation is relatively expensive compared to standard arrays, partly because typed arrays do not exist on the main JS heap and the JS engine has to do extra bookkeeping on them. Using preallocated slices of a single typed array view overall is more efficient, but impractical without a decent wrapper.
+
+In addition to f32, native classes support the following types for fields on all browsers:
+
+i8 - 8 bit signed integer
+u8 - 8 bit unsigned integer
+i16 - 16 bit signed integer
+u16 - 16 bit unsigned integer
+i32 - 32 bit signed integer
+u32 - 32 bit unsigned integer
+f16 - 16 bit float. Getter and setter automatically convert to/from float. See https://en.wikipedia.org/wiki/Half-precision_floating-point_format for more background on fp16
+f32 - 32 bit float 
+f64 - 64 bit float
+
+str8 - A convenience type for 8-bit strings. Javascript strings are automatically allocated and stored into the memory pool. The getter automatically converts them back to javascript strings. Intended as a storage type, using these is much slower than using normal Javascript strings because of the automatic conversions and allocations. 
+
+Warning: The normalized datatype fields dont know how to normalize the values you try to assign to them. You still need to normalize your own values when you use these, and the setters do not do any clamping of values you try to assign, so using unnormalized values with these types will have unpredictable results.
+Normalized formats:
+unorm8 - 8 bit unsigned normalized fraction. Can represent values in the range of 0 - 1.0 with 8 bits of fractional precision.
+unorm16 - 16 bit unsigned normalized fraction. Can represent values in the range of 0 - 1.0 with 16 bits of fractional precision. This format is much faster than fp16 but is much more limited.
+
+The following formats are only available on engines that support BigInt64Array and BigUint64Array, which is currently just V8.
+64-bit integer formats:
+i64 - 64 bit signed integer. Only BigInts may be assigned, and the type of the field when read is a BigInt.
+u64 - 64 bit unsigned integer. Once again, BigInts only.
+
+On engines that have re-enabled SharedArrayBuffer and Atomics, atomic variants of the integer types (except for BigInt) are supported. In addition to the fields being defined on the object, additional functions named for the property suffixed with _atomic$OP$ are added to the native classes' prototype.
+
+Example: A field tuple ('has_completed', 'au8') would also add the following methods to the class prototype:
+  has_completed_cmpxchg(expected_value, new_value)
+  has_completed_atomic_exchange(new_value)
+  has_completed_atomic_(and/or/xor/add/sub)(operand)
+  
+ These methods are thin wrappers around the atomics object.
+  
+
+
+au8 - Atomic u8
+ai8 - Atomic i8
+au16 - Atomic u16
+ai16 - Atomic i16
+au32 - Atomic u32
+ai32 - Atomic i32 with two special extra methods: $PROPERTY$_(wake/wait). These correspond to Atomics.notify/Atomics.wait. 
+
 
 
 
