@@ -1384,6 +1384,108 @@ function cs_mempool_create(_options) {
     function base_arraybuffer() {
         return GLOBAL_MEMORY.buffer;
     }
+	/*
+		constructed with a ptr and a bitfield size. nelements is currently unused
+	*/
+    const create_bitfield_array = (function() {
+
+        const __constructors = (function() {
+            const _imul = Math.imul;
+            
+
+            function create_one(bits_per__) {
+                const bits_per = bits_per__ >>> 0;
+
+                class packed_data_array_t {
+                    constructor(nelements, ptr) {
+						this.ptr = ptr;
+                    }
+
+                    store(index, value) {
+                        const { ptr } = this;
+                        let packed_idx = _imul(index, bits_per);
+                        let index_u32 = packed_idx >>> 5;
+                        let index_end = (packed_idx + bits_per) >>> 5;
+
+                        let v = iread_u32(ptr, index_u32);
+                        let mask = (1 << (bits_per )) - 1;
+
+                        let idxmod32 = packed_idx & 0x1f;
+
+                        if(index_end == index_u32) {
+
+                            v &= ~(mask << idxmod32);
+                            v |= (value << idxmod32);
+                        }
+                        else{
+                            let v2 = iread_u32(ptr,index_u32+1);
+                            let rest = ((packed_idx + (bits_per)) & 0x1F);
+                            mask >>>= rest;
+
+                            v &= ~(mask << idxmod32);
+                            v2 &= ~((1 << (rest))-1);
+                            v2 |= (value >>> (bits_per - rest));
+
+                            v |= ((value& mask) << idxmod32);
+                            iwrite_u32(ptr, index_u32+1, v2);
+                        }
+                        iwrite_u32(ptr, index_u32, v);
+                    }
+
+                    load(index) {
+                        const { ptr } = this;
+
+                        let packed_idx = _imul(index, bits_per);
+
+                        let value = 0;
+
+                        let index_u32 = packed_idx >>> 5;
+                        let index_end = (packed_idx + bits_per) >>> 5;
+                        let idxmod32 = packed_idx & 0x1f;
+                        let v = iread_u32(ptr, index_u32);
+
+
+                        if(index_u32 != index_end) {
+
+
+                            let v2 = iread_u32(ptr, index_u32+1);
+                            let rest = ((packed_idx + (bits_per)) & 0x1F);
+                            v >>>= idxmod32;
+                            v &= ((1 << bits_per) - 1) >>> (rest) ;
+
+                            v2 &= (1 << (rest))-1;
+
+                            v |= v2 << (bits_per - rest);
+                            return v;
+                        }
+                        else {
+                            let mask = (1 << bits_per) - 1;
+                            v >>>= idxmod32;
+                            v &= mask;
+                            return v >>> 0;
+                        }
+                    }
+                }
+                return packed_data_array_t;
+            }
+
+            const ctor_array = [];
+
+            for(let i = 0; i < 32; ++i) {
+                ctor_array.push(create_one(i));
+            }
+            return ctor_array;
+        })();
+
+
+        return function(ptr, nelements, bits_per) {
+            const __ctor = __constructors[bits_per];
+            return new __ctor(nelements, ptr);
+        };
+
+    })();
+
+	
 
     return _freeze({
         stack_frame_end,
@@ -1447,6 +1549,7 @@ function cs_mempool_create(_options) {
         base_arraybuffer,
         FUTEX_WAITED,
         FUTEX_WASNE,
-        FUTEX_TIMED_OUT
+        FUTEX_TIMED_OUT,
+		create_bitfield_array
     });
 }
