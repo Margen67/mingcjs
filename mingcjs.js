@@ -158,20 +158,23 @@ function cs_mempool_create(_options) {
 				newData = new (element_constructor)(...rest);
 			}
 			var newElement = new cs_list_element_t(newData);
+			let size = this._size;
+			
 			//list head
-			if (ele == null) {
-				if (this.size() == 0)
-					this._set_tail(newElement);
-				newElement._set_next(this.head());
-				this._set_head(newElement);
+			if (ele === null) {
+				if (size === 0)
+					this._tail = newElement;
+				newElement._next = this._head;
+				this._head = newElement;
 			}
 			else {
-				if (ele.is_tail())
-					this._set_tail(newElement);
-				newElement._set_next(ele.next());
-				ele._set_next(newElement);
+				if (ele._next === null)
+					this._tail = (newElement);
+				newElement._next = ele._next;
+				ele._next = (newElement);
 			}
-			this._set_size(this.size() + 1);
+			this._size = ((size|0) + 1)|0;
+			return 0;
 		};
 		cs_list_t.prototype.destroy = function () {
 			while (this.size() > 0) {
@@ -280,7 +283,7 @@ function cs_mempool_create(_options) {
             }
 
             this.pageTable = new page_list_t();
-            this.totalAlloc = nbytes;
+            this.totalAlloc = nbytes|0;
             this.currentReserved = 0;
 
 
@@ -295,32 +298,37 @@ function cs_mempool_create(_options) {
         }
 
         findPageForSize(nbytes) {
-            let pg = this.pageTable.head();
-            while (pg != null) {
-                let data = pg.data();
-                if (!data.claimed() && data.size() >= nbytes) {
+			nbytes|=0;
+            let pg = this.pageTable._head;
+            while (pg !== null) {
+                let data = pg._data;
+                if (data._claimed === false && data._size >= nbytes) {
                     return pg;
                 }
-                pg = pg.next();
+                pg = pg._next;
             }
             return null;
         }
-
+		//node v11 - 2264 insns before opt
+		//after opt - v11, 1776 insns
         allocate(nbytes) {
-            let found = this.findPageForSize(nbytes);
-            if (found) {
-                let page = found.data();
-                if (page.size() > nbytes) {
-                    this.add_page_after(found, page.size() - nbytes + page.offset(), nbytes);
-                    page._set_size(page.size() - nbytes);
-                    page = found.next().data();
+			nbytes|=0;
+            let found = this.findPageForSize(nbytes|0);
+            if (found !== null) {
+                let page = found._data;
+				let sz = page._size|0;
+				
+                if (sz > nbytes) {
+                    this.add_page_after(found, ((((sz|0) - (nbytes|0))|0) + (page._offset|0))|0, nbytes|0);
+                    page._size = ((sz|0) - (nbytes|0))|0;
+                    page = found._next._data;
                 }
-                page._set_claimed(true);
-                this.currentReserved += nbytes;
-                return page.offset();
+                page._claimed = true;
+                this.currentReserved = ((this.currentReserved|0)+(nbytes|0))|0;
+                return page._offset|0;
             }
             else
-                return nullptr;
+                return nullptr|0;
         }
 
         free(ptr) {
@@ -1563,3 +1571,5 @@ function cs_mempool_create(_options) {
 	create_bitfield_array
     });
 }
+
+
