@@ -1,5 +1,9 @@
 
 function cs_mempool_create(_options) {
+	
+	const create_empty_object = (function(){const _create = Object.create;
+	return function(){return _create(null);};})();
+	
     const KILOBYTE = 1024;
 
     _options = _options || {
@@ -80,169 +84,164 @@ function cs_mempool_create(_options) {
     const has_sab = typeof __global__["SharedArrayBuffer"] !== "undefined" && (!options.MEM_ARRAYBUFFER || options.MEM_ARRAYBUFFER instanceof SharedArrayBuffer);
 
     const has_bigint64 = typeof __global__["BigInt64Array"] !== "undefined";
+	const cs_list_element_t = (function(){
+		
+		function cs_list_element_t(data){
+			this._data=data;
+			this._next=null;
+		}
+		
+		const list_ele_proto = (cs_list_element_t.prototype = create_empty_object());
 
-    class cs_list_element_t {
-        constructor(data) {
-            this._data = data;
-            this._next = null;
-        }
+		list_ele_proto._data = null;
+		list_ele_proto._next = null;
 
-        is_tail() {
-            return !this._next;
-        }
-
-        data() {
-            return this._data;
-        }
-
-        next() {
-            return this._next;
-        }
-
-        _set_next(ele) {
-            this._next = ele;
-        }
-
-        destroy() {
-            this.data = null;
-            this._set_next(null);
-        }
-    }
+		list_ele_proto.is_tail = function(){
+			return this._next === null;
+		};
+		list_ele_proto.data = function(){
+			return this._data;
+		};
+		list_ele_proto.next = function(){
+			return this._next;
+		};
+		list_ele_proto._set_next = function(ele){
+			this._next = ele;
+		};
+		list_ele_proto.destroy = function(){
+			this._data = null;
+			this._next = null;
+		};
+		return cs_list_element_t;
+	})();
 
 
     function cs_list(element_constructor) {
 
+		function cs_list_t() {
+			this._size = 0;
+			this._head = this._tail = null;
+		}
+		cs_list_t.prototype = create_empty_object();
+		
+		cs_list_t.prototype._size=0;
+		
+		cs_list_t.prototype._size|=0;
+		cs_list_t.prototype._head=null;
+		cs_list_t.prototype._tail = null;
+		
+		cs_list_t.prototype.size = function () {
+			return this._size;
+		};
+		cs_list_t.prototype.head = function () {
+			return this._head;
+		};
+		cs_list_t.prototype.tail = function () {
+			return this._tail;
+		};
+		cs_list_t.prototype._set_tail = function (ele) {
+			this._tail = ele;
+		};
+		cs_list_t.prototype._set_head = function (ele) {
+			this._head = ele;
+		};
+		cs_list_t.prototype._set_size = function (sz) {
+			this._size = sz;
+		};
+		cs_list_t.prototype.insertNext = function (ele,...rest) {
+		
+			var newData;
+			if (typeof rest[0] === 'object') {
+				newData = rest[0];
+			}
+			else {
+				newData = new (element_constructor)(...rest);
+			}
+			var newElement = new cs_list_element_t(newData);
+			//list head
+			if (ele == null) {
+				if (this.size() == 0)
+					this._set_tail(newElement);
+				newElement._set_next(this.head());
+				this._set_head(newElement);
+			}
+			else {
+				if (ele.is_tail())
+					this._set_tail(newElement);
+				newElement._set_next(ele.next());
+				ele._set_next(newElement);
+			}
+			this._set_size(this.size() + 1);
+		};
+		cs_list_t.prototype.destroy = function () {
+			while (this.size() > 0) {
+				this.removeNext(null);
+			}
+		};
+		cs_list_t.prototype.removeNext = function (ele) {
+			if (this.size() === 0) {
+				return;
+			}
+			var data;
+			var old;
+			//head
+			if (ele == null) {
+				old = this.head();
+				data = old.data();
+				this._set_head(old.next());
+				if (this.size() == 1) {
+					this._set_tail(null);
+				}
+			}
+			else {
+				if (ele.is_tail()) {
+					return;
+				}
+				old = ele.next();
+				ele._set_next(old.next());
+				if (ele.next() == null) {
+					this._set_tail(ele);
+				}
+			}
+			old.destroy();
+			this._set_size(this.size() - 1);
+		};
 
-        class cs_list_t {
-            constructor() {
-                this._size = 0;
-                this._head = this._tail = null;
-            }
 
-            size() {
-                return this._size;
-            }
-
-            head() {
-                return this._head;
-            }
-
-            tail() {
-                return this._tail;
-            }
-
-            _set_tail(ele) {
-                this._tail = ele;
-            }
-
-            _set_head(ele) {
-                this._head = ele;
-            }
-
-            _set_size(sz) {
-                this._size = sz;
-            }
-
-            insertNext(ele, ...rest) {
-
-                let newData;
-                if (typeof rest[0] === 'object') {
-                    newData = rest[0];
-                }
-                else {
-                    newData = new element_constructor(...rest);
-                }
-                let newElement = new cs_list_element_t(newData);
-                //list head
-                if (ele == null) {
-                    if (this.size() == 0)
-                        this._set_tail(newElement);
-                    newElement._set_next(this.head());
-                    this._set_head(newElement);
-                }
-                else {
-                    if (ele.is_tail())
-                        this._set_tail(newElement);
-                    newElement._set_next(ele.next());
-                    ele._set_next(newElement);
-                }
-                this._set_size(this.size() + 1);
-            }
-
-            destroy() {
-                while (this.size() > 0) {
-                    this.removeNext(null);
-                }
-            }
-
-            removeNext(ele) {
-                if (this.size() == 0) {
-                    return;
-                }
-                let data;
-                let old;
-                //head
-                if (ele == null) {
-                    old = this.head();
-                    data = old.data();
-                    this._set_head(old.next());
-                    if (this.size() == 1) {
-                        this._set_tail(null);
-                    }
-                }
-                else {
-                    if (ele.is_tail()) {
-                        return;
-                    }
-                    old = ele.next();
-                    ele._set_next(old.next());
-                    if (ele.next() == null) {
-                        this._set_tail(ele);
-                    }
-                }
-                old.destroy();
-                this._set_size(this.size() - 1);
-            }
-        }
 
         return cs_list_t;
     }
-
-    class cs_page_t {
-        constructor(offset, size) {
-
-            this._size = size >>> 0;
-            this._claimed = false;
-
-            this._offset = (offset >>> 0);
-
-
-        }
-
-        size() {
-            return this._size;
-        }
-
-        claimed() {
-            return this._claimed;
-        }
-
-        _set_size(value) {
-            this._size = value;
-        }
-
-        _set_claimed(value) {
-            this._claimed = value;
-        }
-
-        offset() {
-            return this._offset >>> 0;
-        }
-
-        _set_offset(offs) {
-            this._offset = offs >>> 0;
-        }
-    }
+		function cs_page_t(offset, size) {
+			this._size = size | 0;
+			this._claimed = false;
+			this._offset = (offset | 0);
+		}
+		cs_page_t.prototype = create_empty_object();
+		cs_page_t.prototype._size=0;
+		cs_page_t.prototype._size|=0;
+		cs_page_t.prototype._claimed=false;
+		cs_page_t.prototype._offset=0;
+		cs_page_t.prototype._offset|=0;
+		cs_page_t.prototype.size = function () {
+			return this._size|0;
+		};
+		
+		cs_page_t.prototype.claimed = function () {
+			return this._claimed;
+		};
+		cs_page_t.prototype._set_size = function (value) {
+			this._size = value;
+		};
+		cs_page_t.prototype._set_claimed = function (value) {
+			this._claimed = value;
+		};
+		cs_page_t.prototype.offset = function () {
+			return this._offset | 0;
+		};
+		cs_page_t.prototype._set_offset = function (offs) {
+			this._offset = offs | 0;
+		};
+	
 
     const page_list_t = cs_list(cs_page_t);
 
@@ -348,6 +347,7 @@ function cs_mempool_create(_options) {
                 }
             }
             data._set_claimed(false);
+			
             if (prev != null && !prev.data().claimed()) {
                 let prevData = prev.data();
                 prevData._set_size(data.size() + prevData.size());
@@ -411,32 +411,37 @@ function cs_mempool_create(_options) {
 
     const {stack_frame_begin, stack_frame_end} = (function () {
 
-        let _sp = STACK_BASE >>> 0;
+        let _sp = STACK_BASE| 0;
 
-        class cached_sp_t {
-            constructor() {
-                this.old_base = 0 >>> 0;
-                this.sp = 0 >>> 0;
-            }
-        }
+		function cached_sp_t(){
+			this.old_base = 0|0;
+			this.sp = 0|0;
+		}
+		
+		cached_sp_t.prototype = create_empty_object();
+		cached_sp_t.prototype.old_base=0;
+		cached_sp_t.prototype.old_base|=0;
+		cached_sp_t.prototype.sp =0;
+		cached_sp_t.prototype.sp|=0;
+
 
         const __sp_res = new cached_sp_t();
 
         function stack_frame_begin(size) {
 
-            __sp_res.old_base = _sp >>> 0;
+            __sp_res.old_base = _sp | 0;
 
-            _sp += 8 >>> 0;
-            _sp &= (~7) >>> 0;
+            _sp = ((_sp|0) +(8|0))|0;
+            _sp &= (~7);
 
-            __sp_res.sp = _sp >>> 0;
-            _sp += size >>> 0;
+            __sp_res.sp = _sp|0;
+            _sp = ((_sp|0)+(size|0))|0;
 
             return __sp_res;
         }
 
         function stack_frame_end(old_base) {
-            _sp = old_base >>> 0;
+            _sp = old_base |0;
         }
 
         return {stack_frame_begin, stack_frame_end};
@@ -445,61 +450,63 @@ function cs_mempool_create(_options) {
 
     const cs_lookaside_list_t = (function () {
 
-        class cs_lookaside_entry_t {
-            constructor() {
-                this.next = null;
-                this.value = 0 >>> 0;
+		
+		function cs_lookaside_entry_t(){
+			this.next=null;
+			this.value = 0|0;
+		}
+		
+		cs_lookaside_entry_t.prototype = create_empty_object();
+		
+		cs_lookaside_entry_t.prototype.next=null;
+		cs_lookaside_entry_t.prototype.value=0;
+		cs_lookaside_entry_t.prototype.value|=0;
 
-            }
+    function cs_lookaside_impl_t(base, end) {
+        this.avail = null;
+        this.entries = null;
+        this.base = base;
+        this.end = end;
+    }
+	cs_lookaside_impl_t.prototype = create_empty_object();
+	cs_lookaside_impl_t.prototype .avail = null;
+	cs_lookaside_impl_t.prototype .entries = null;
+	cs_lookaside_impl_t.prototype .base = 0;
+	cs_lookaside_impl_t.prototype .end = 0;
+		
+	cs_lookaside_impl_t.prototype .base |= 0;
+	cs_lookaside_impl_t.prototype .end |= 0;
+	
+    cs_lookaside_impl_t.prototype._new_entry = function () {
+        var n = this.avail;
+        if (!n) {
+            return new cs_lookaside_entry_t();
         }
-
-        class cs_lookaside_impl_t {
-            _new_entry() {
-                const n = this.avail;
-                if (!n) {
-                    return new cs_lookaside_entry_t();
-                }
-                else {
-                    this.avail = n.next;
-                    return n;
-                }
-            }
-
-            _release_entry(entry) {
-                entry.value = 0;
-                entry.next = this.avail;
-                this.avail = entry;
-            }
-
-            constructor(base, end) {
-                this.avail = null;
-                this.entries = null;
-                this.base = base;
-                this.end = end;
-            }
-
-            insert_head(offset) {
-                const entry = this._new_entry();
-
-                entry.value = offset >>> 0;
-
-                entry.next = this.entries;
-                this.entries = entry;
-
-
-            }
-
-            alloc() {
-                const result = this.entries;
-
-                const result_val = result.value >>> 0;
-
-                this.entries = result.next;
-                this._release_entry(result);
-                return result_val;
-            }
-
+        else {
+            this.avail = n.next;
+            return n;
         }
+    };
+    cs_lookaside_impl_t.prototype._release_entry = function (entry) {
+        entry.value = 0;
+        entry.next = this.avail;
+        this.avail = entry;
+    };
+    cs_lookaside_impl_t.prototype.insert_head = function (offset) {
+        var entry = this._new_entry();
+        entry.value = offset | 0;
+        entry.next = this.entries;
+        this.entries = entry;
+    };
+    cs_lookaside_impl_t.prototype.alloc = function () {
+        var result = this.entries;
+        var result_val = result.value | 0;
+        this.entries = result.next;
+        this._release_entry(result);
+        return result_val;
+    };
+
+
 
         return cs_lookaside_impl_t;
     })();
@@ -508,6 +515,7 @@ function cs_mempool_create(_options) {
 
 
     function build_lookaside_list(sizeof_data, nentries) {
+
 
         const LL_BASE = GLOBAL_MEMORY.allocate(sizeof_data*nentries);
         const LL_END = LL_BASE + (sizeof_data*nentries);
@@ -1288,6 +1296,8 @@ function cs_mempool_create(_options) {
                     this.ptr = nullptr;
                 });
 
+		native_class.prototype=create_empty_object();
+
         let offset = 0;
 
 
@@ -1550,6 +1560,6 @@ function cs_mempool_create(_options) {
         FUTEX_WAITED,
         FUTEX_WASNE,
         FUTEX_TIMED_OUT,
-		create_bitfield_array
+	create_bitfield_array
     });
 }
